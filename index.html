@@ -335,7 +335,7 @@ create table if not exists public.cpf_uses (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
   beneficiary_id uuid references public.beneficiaries(id) on delete cascade,
-  program text not null, cpf text not null, used_date date not null,
+  program text not null, cpf text, qty integer default 1, used_date date not null,
   transaction_id uuid references public.transactions(id) on delete cascade,
   created_at timestamptz default now());
 
@@ -370,6 +370,8 @@ function rateOf(rec){ const k=valueKey(rec); return STATE.values[k] ?? DEFAULT_V
 function moneyOf(rec){ return (Number(rec.amount)||0)/1000 * rateOf(rec); }
 
 const fmtNum = n => (Number(n)||0).toLocaleString('pt-BR');
+function parseBR(str){ if(typeof str==='number') return str; let s=String(str==null?'':str).trim().replace(/\s/g,''); if(!s) return NaN; if(s.includes(',')) s=s.replace(/\./g,'').replace(',', '.'); else s=s.replace(/\./g,''); return Number(s); }
+function bindMilesInput(el){ if(!el||el.dataset.brBound) return; el.dataset.brBound='1'; el.addEventListener('blur',()=>{ const n=parseBR(el.value); el.value=isFinite(n)&&el.value.trim()!==''?fmtNum(n):el.value; }); }
 const fmtBRL = v => (Number(v)||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
 function fmtDate(s){ if(!s) return '—'; const [y,m,d]=s.split('-'); return `${d}/${m}/${y}`; }
 function todayStr(){ const t=new Date(); const off=t.getTimezoneOffset()*60000; return new Date(t-off).toISOString().slice(0,10); }
@@ -714,17 +716,18 @@ function openSaldo(id){
     <div class="field"><label>Programa</label><select id="f-prog" onchange="toggleCustom('f-prog','wrap-custom')">${progOptions(s?s.program:'smiles')}</select></div>
     <div class="field" id="wrap-custom" style="display:${s&&s.program==='outro'?'block':'none'}"><label>Nome do programa</label><input id="f-custom" value="${s&&s.program_custom?s.program_custom:''}" placeholder="Ex.: TAP Miles&Go"></div>
     <div class="grid2">
-      <div class="field"><label>Saldo (milhas)</label><input id="f-amount" type="number" inputmode="numeric" min="0" value="${s?s.amount:''}" placeholder="0"><div class="err" id="e-amount">Informe o saldo.</div></div>
+      <div class="field"><label>Saldo (milhas)</label><input id="f-amount" type="text" inputmode="numeric" value="${s?fmtNum(s.amount):''}" placeholder="100.000"><div class="err" id="e-amount">Informe o saldo.</div></div>
       <div class="field"><label>Data do saldo</label><input id="f-bdate" type="date" value="${s?s.balance_date:todayStr()}"></div>
     </div>
     <div class="field"><label>Vencimento das milhas <span class="opt">(opcional)</span></label><input id="f-exp" type="date" value="${s&&s.expiration_date?s.expiration_date:''}"></div>
     <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" onclick="saveSaldo('${id||''}')">${s?'Salvar':'Adicionar'}</button></div>
   </div>`);
+  bindMilesInput(document.getElementById('f-amount'));
 }
 async function saveSaldo(id){
-  const amount=document.getElementById('f-amount').value;
-  if(amount===''||Number(amount)<0){ document.getElementById('e-amount').classList.add('show'); return; }
-  const row={ beneficiary_id:document.getElementById('f-ben').value, program:document.getElementById('f-prog').value, program_custom:document.getElementById('f-custom')?document.getElementById('f-custom').value.trim():'', amount:Number(amount), balance_date:document.getElementById('f-bdate').value||todayStr(), expiration_date:document.getElementById('f-exp').value||null };
+  const amount=parseBR(document.getElementById('f-amount').value);
+  if(!isFinite(amount)||amount<0){ document.getElementById('e-amount').classList.add('show'); return; }
+  const row={ beneficiary_id:document.getElementById('f-ben').value, program:document.getElementById('f-prog').value, program_custom:document.getElementById('f-custom')?document.getElementById('f-custom').value.trim():'', amount, balance_date:document.getElementById('f-bdate').value||todayStr(), expiration_date:document.getElementById('f-exp').value||null };
   if(id){ if(await dbUpdate('balances',id,row)) Object.assign(STATE.balances.find(x=>x.id===id),row); }
   else { const r=await dbInsert('balances',row); if(r) STATE.balances.push(r); }
   closeModal(); renderNav(); render(); toast(id?'Saldo atualizado.':'Saldo adicionado.');
@@ -847,7 +850,7 @@ function viewLancamentos(){
         let tipo,detalhe;
         if(t.type==='venda'){
           tipo=`<span class="pill urgent"><span class="pdot"></span>Venda</span>`;
-          const cpfs=STATE.cpf_uses.filter(u=>u.transaction_id===t.id).length;
+          const cpfs=STATE.cpf_uses.filter(u=>u.transaction_id===t.id).reduce((a,u)=>a+useQty(u),0);
           detalhe=`−${fmtNum(t.amount)} ${progLabel({program:t.program,program_custom:t.program_custom})}${cpfs?` <span class="sub-r">· ${cpfs} CPF(s)</span>`:''}`;
         }else{
           tipo=`<span class="pill ok"><span class="pdot"></span>Transferência</span>`;
@@ -876,11 +879,11 @@ function openVenda(){
     <div class="field"><label>Conta / programa vendido</label><select id="v-prog" onchange="toggleCustom('v-prog','v-wrap-custom');vRefresh()">${progOptions('latam')}</select></div>
     <div class="field" id="v-wrap-custom" style="display:none"><label>Nome do programa</label><input id="v-custom" oninput="vRefresh()" placeholder="Ex.: TAP Miles&Go"></div>
     <div class="grid2">
-      <div class="field"><label>Quantidade vendida</label><input id="v-amount" type="number" min="0" oninput="vRefresh()" placeholder="0"><div class="err" id="v-err"></div></div>
+      <div class="field"><label>Quantidade vendida</label><input id="v-amount" type="text" inputmode="numeric" oninput="vRefresh()" placeholder="100.000"><div class="err" id="v-err"></div></div>
       <div class="field"><label>Data da venda</label><input id="v-date" type="date" value="${todayStr()}"></div>
     </div>
     <div class="hint" id="v-avail" style="margin-top:-6px"></div>
-    <div id="v-cpf-wrap" style="display:none"><div class="field"><label>CPFs usados <span class="opt">(um por linha)</span></label><textarea id="v-cpfs" rows="3" style="width:100%;padding:11px 13px;border:1px solid var(--line);border-radius:10px;font-size:14px;font-family:inherit" placeholder="123.456.789-00&#10;Maria Silva"></textarea></div></div>
+    <div id="v-cpf-wrap" style="display:none"><div class="field"><label>Quantidade de CPFs usados <span class="opt">(opcional)</span></label><input id="v-cpfqty" type="number" min="0" step="1" placeholder="0"></div></div>
     <div class="field"><label>Observação <span class="opt">(opcional)</span></label><input id="v-note" placeholder="Ex.: vendido pela plataforma X"></div>
     <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" onclick="saveVenda()">Lançar venda</button></div>
   </div>`);
@@ -891,13 +894,14 @@ function vRefresh(){
   const custom=document.getElementById('v-custom')?document.getElementById('v-custom').value:'';
   const el=document.getElementById('v-avail'); if(el) el.innerHTML=`Disponível nesta conta: <b>${fmtNum(totalFor(ben,prog,custom))}</b> milhas`;
   const w=document.getElementById('v-cpf-wrap'); if(w) w.style.display=(prog==='smiles'||prog==='latam')?'block':'none';
+  bindMilesInput(document.getElementById('v-amount'));
 }
 async function saveVenda(){
   const ben=document.getElementById('v-ben').value, prog=document.getElementById('v-prog').value;
   const custom=document.getElementById('v-custom')?document.getElementById('v-custom').value.trim():'';
-  const amount=Number(document.getElementById('v-amount').value), date=document.getElementById('v-date').value||todayStr();
+  const amount=parseBR(document.getElementById('v-amount').value), date=document.getElementById('v-date').value||todayStr();
   const err=document.getElementById('v-err');
-  if(!amount||amount<=0){ err.textContent='Informe a quantidade.'; err.classList.add('show'); return; }
+  if(!isFinite(amount)||amount<=0){ err.textContent='Informe a quantidade.'; err.classList.add('show'); return; }
   const avail=totalFor(ben,prog,custom);
   if(amount>avail){ err.textContent=`Saldo insuficiente (tem ${fmtNum(avail)}).`; err.classList.add('show'); return; }
   const note=document.getElementById('v-note').value.trim();
@@ -906,8 +910,8 @@ async function saveVenda(){
   const effects=await consumeFIFO(ben,prog,custom,amount);
   await dbUpdate('transactions',tx.id,{effects}); tx.effects=effects; STATE.transactions.unshift(tx);
   if(prog==='smiles'||prog==='latam'){
-    const lines=(document.getElementById('v-cpfs').value||'').split('\n').map(s=>s.trim()).filter(Boolean);
-    for(const cpf of lines){ const r=await dbInsert('cpf_uses',{beneficiary_id:ben,program:prog,cpf,used_date:date,transaction_id:tx.id}); if(r) STATE.cpf_uses.push(r); }
+    const qty=parseInt(document.getElementById('v-cpfqty').value,10);
+    if(qty>0){ const r=await dbInsert('cpf_uses',{beneficiary_id:ben,program:prog,qty,used_date:date,transaction_id:tx.id}); if(r) STATE.cpf_uses.push(r); }
   }
   closeModal(); renderNav(); render(); toast('Venda lançada e saldo atualizado.');
 }
@@ -920,12 +924,12 @@ function openTransfer(){
     <div class="field"><label>Beneficiário</label><select id="t-ben" onchange="tRefresh()">${benefOptions('')}</select></div>
     <div class="grid2">
       <div class="field"><label>Origem (sai)</label><select id="t-from" onchange="toggleCustom('t-from','t-from-wrap');tRefresh()">${progOptions('livelo')}</select></div>
-      <div class="field"><label>Milhas que saem</label><input id="t-fromamt" type="number" min="0" oninput="tRefresh()" placeholder="0"></div>
+      <div class="field"><label>Milhas que saem</label><input id="t-fromamt" type="text" inputmode="numeric" oninput="tRefresh()" placeholder="100.000"></div>
     </div>
     <div class="field" id="t-from-wrap" style="display:none"><label>Nome do programa de origem</label><input id="t-fromcustom" oninput="tRefresh()"></div>
     <div class="grid2">
       <div class="field"><label>Destino (entra)</label><select id="t-to" onchange="toggleCustom('t-to','t-to-wrap')">${progOptions('smiles')}</select></div>
-      <div class="field"><label>Milhas que entram</label><input id="t-toamt" type="number" min="0" oninput="tRefresh()" placeholder="0"></div>
+      <div class="field"><label>Milhas que entram</label><input id="t-toamt" type="text" inputmode="numeric" oninput="tRefresh()" placeholder="180.000"></div>
     </div>
     <div class="field" id="t-to-wrap" style="display:none"><label>Nome do programa de destino</label><input id="t-tocustom"></div>
     <div class="field"><label>Data</label><input id="t-date" type="date" value="${todayStr()}"></div>
@@ -938,19 +942,20 @@ function openTransfer(){
 function tRefresh(){
   const ben=document.getElementById('t-ben').value, from=document.getElementById('t-from').value;
   const fc=document.getElementById('t-fromcustom')?document.getElementById('t-fromcustom').value:'';
-  const fa=Number(document.getElementById('t-fromamt').value)||0, ta=Number(document.getElementById('t-toamt').value)||0;
+  const fa=parseBR(document.getElementById('t-fromamt').value)||0, ta=parseBR(document.getElementById('t-toamt').value)||0;
   const el=document.getElementById('t-avail');
   if(el){ let bonus=''; if(fa>0&&ta>0){ const pct=Math.round((ta/fa-1)*100); bonus=` • bônus ${pct>=0?'+':''}${pct}%`; } el.innerHTML=`Disponível na origem: <b>${fmtNum(totalFor(ben,from,fc))}</b> milhas${bonus}`; }
+  bindMilesInput(document.getElementById('t-fromamt')); bindMilesInput(document.getElementById('t-toamt'));
 }
 async function saveTransfer(){
   const ben=document.getElementById('t-ben').value;
   const from=document.getElementById('t-from').value, fc=document.getElementById('t-fromcustom')?document.getElementById('t-fromcustom').value.trim():'';
   const to=document.getElementById('t-to').value, tc=document.getElementById('t-tocustom')?document.getElementById('t-tocustom').value.trim():'';
-  const fa=Number(document.getElementById('t-fromamt').value), ta=Number(document.getElementById('t-toamt').value), date=document.getElementById('t-date').value||todayStr();
+  const fa=parseBR(document.getElementById('t-fromamt').value), ta=parseBR(document.getElementById('t-toamt').value), date=document.getElementById('t-date').value||todayStr();
   const err=document.getElementById('t-err');
   const sameAccount = from===to && (from!=='outro' || fc.toLowerCase()===tc.toLowerCase());
   if(sameAccount){ err.textContent='Origem e destino devem ser contas diferentes.'; err.classList.add('show'); return; }
-  if(!fa||fa<=0||!ta||ta<=0){ err.textContent='Informe quanto sai e quanto entra.'; err.classList.add('show'); return; }
+  if(!isFinite(fa)||fa<=0||!isFinite(ta)||ta<=0){ err.textContent='Informe quanto sai e quanto entra.'; err.classList.add('show'); return; }
   const avail=totalFor(ben,from,fc);
   if(fa>avail){ err.textContent=`Saldo insuficiente na origem (tem ${fmtNum(avail)}).`; err.classList.add('show'); return; }
   const tx=await dbInsert('transactions',{type:'transferencia',date,beneficiary_id:ben,from_program:from,from_program_custom:from==='outro'?fc:'',from_amount:fa,to_program:to,to_program_custom:to==='outro'?tc:'',to_amount:ta,effects:[]});
@@ -965,17 +970,17 @@ async function saveTransfer(){
 /* ===================== Gestor de CPF ===================== */
 const CPF_LIMITS={smiles:25, latam:24};
 function addDays(s,n){ const [y,m,d]=s.split('-').map(Number); const dt=new Date(y,m-1,d); dt.setDate(dt.getDate()+n); const off=dt.getTimezoneOffset()*60000; return new Date(dt-off).toISOString().slice(0,10); }
-function distinctLatest(uses){ const m={}; uses.forEach(u=>{ const k=(u.cpf||'').trim().toLowerCase(); if(!k) return; if(!m[k]||(u.used_date||'')>m[k]) m[k]=u.used_date||''; }); return m; }
+function useQty(u){ const q=Number(u.qty); return isFinite(q)&&q>0?q:1; }
 function cpfStat(benId, program){
   const uses=STATE.cpf_uses.filter(u=>u.beneficiary_id===benId && u.program===program);
-  const latest=distinctLatest(uses); const limit=CPF_LIMITS[program];
+  const limit=CPF_LIMITS[program];
   let used=0, nextFree=null;
   if(program==='smiles'){
     const y=new Date().getFullYear();
-    Object.values(latest).forEach(d=>{ if(d && new Date(d+'T00:00:00').getFullYear()===y) used++; });
+    uses.forEach(u=>{ if(u.used_date && new Date(u.used_date+'T00:00:00').getFullYear()===y) used+=useQty(u); });
     nextFree=(y+1)+'-01-01';
   }else{
-    Object.values(latest).forEach(d=>{ if(!d) return; const age=-daysUntil(d); if(age<365){ used++; const f=addDays(d,365); if(!nextFree||f<nextFree) nextFree=f; } });
+    uses.forEach(u=>{ if(!u.used_date) return; const age=-daysUntil(u.used_date); if(age<365){ used+=useQty(u); const f=addDays(u.used_date,365); if(!nextFree||f<nextFree) nextFree=f; } });
   }
   return {used, available:Math.max(0,limit-used), limit, nextFree};
 }
@@ -1015,8 +1020,9 @@ function openCpfDetail(benId, prog){
     let st='';
     if(prog==='latam'){ const left=365-(-daysUntil(u.used_date)); st=left>0?`libera em ${left}d`:'já renovado'; }
     else { const y=new Date().getFullYear(); st=(new Date(u.used_date+'T00:00:00').getFullYear()===y)?'conta este ano':'ano anterior'; }
-    return `<div class="vrow"><div class="vlabel" style="flex-direction:column;align-items:flex-start;gap:2px"><div>${u.cpf}</div><div class="sub-r">${fmtDate(u.used_date)} · ${st}</div></div><button class="icon-btn del" onclick="delCpf('${u.id}')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg></button></div>`;
-  }).join(''):`<div class="empty" style="padding:24px"><p style="margin:0">Nenhum CPF registrado nesta conta.</p></div>`;
+    const label=(u.cpf&&String(u.cpf).trim())?u.cpf:`${useQty(u)} uso(s)`;
+    return `<div class="vrow"><div class="vlabel" style="flex-direction:column;align-items:flex-start;gap:2px"><div>${label}</div><div class="sub-r">${fmtDate(u.used_date)} · ${st}</div></div><button class="icon-btn del" onclick="delCpf('${u.id}')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg></button></div>`;
+  }).join(''):`<div class="empty" style="padding:24px"><p style="margin:0">Nenhum uso registrado nesta conta.</p></div>`;
   openModal(`<div class="modal-head"><div><h3>CPFs — ${pName}</h3><p>${benefName(benId)}</p></div></div><div class="modal-body"><div class="card"><div class="vlist">${rows}</div></div><div class="modal-foot" style="margin-top:14px"><button class="btn btn-ghost" onclick="closeModal()">Fechar</button><button class="btn btn-amber" onclick="openCpfUse('${benId}','${prog}')">Registrar uso</button></div></div>`);
 }
 async function delCpf(id){ if(await dbDelete('cpf_uses',id)) STATE.cpf_uses=STATE.cpf_uses.filter(x=>x.id!==id); closeModal(); render(); toast('Uso de CPF removido.'); }
@@ -1026,15 +1032,15 @@ function openCpfUse(benId, prog){
   <div class="modal-body">
     <div class="field"><label>Beneficiário</label><select id="cu-ben">${benefOptions(benId||'')}</select></div>
     <div class="field"><label>Conta</label><select id="cu-prog"><option value="smiles" ${prog==='smiles'?'selected':''}>Smiles</option><option value="latam" ${prog==='latam'?'selected':''}>Latam Pass</option></select></div>
-    <div class="field"><label>CPF <span class="opt">(nº ou nome do titular)</span></label><input id="cu-cpf" placeholder="123.456.789-00"><div class="err" id="cu-err">Informe o CPF.</div></div>
+    <div class="field"><label>Quantidade de CPFs usados</label><input id="cu-qty" type="number" min="1" step="1" value="1"><div class="err" id="cu-err">Informe uma quantidade.</div></div>
     <div class="field"><label>Data do uso</label><input id="cu-date" type="date" value="${todayStr()}"></div>
     <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" onclick="saveCpfUse()">Registrar</button></div>
   </div>`);
 }
 async function saveCpfUse(){
-  const cpf=document.getElementById('cu-cpf').value.trim();
-  if(!cpf){ document.getElementById('cu-err').classList.add('show'); return; }
-  const row={beneficiary_id:document.getElementById('cu-ben').value, program:document.getElementById('cu-prog').value, cpf, used_date:document.getElementById('cu-date').value||todayStr()};
+  const qty=parseInt(document.getElementById('cu-qty').value,10);
+  if(!qty||qty<1){ document.getElementById('cu-err').classList.add('show'); return; }
+  const row={beneficiary_id:document.getElementById('cu-ben').value, program:document.getElementById('cu-prog').value, qty, used_date:document.getElementById('cu-date').value||todayStr()};
   const r=await dbInsert('cpf_uses',row); if(r) STATE.cpf_uses.push(r);
   closeModal(); render(); toast('Uso de CPF registrado.');
 }
