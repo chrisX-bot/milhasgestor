@@ -243,6 +243,8 @@
       <a data-view="dash"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>Visão geral<span class="badge" id="nav-badge" style="display:none"></span></a>
       <a data-view="saldos"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>Saldo de milhas</a>
       <a data-view="clubes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 4 7v6c0 5 3.5 7.5 8 9 4.5-1.5 8-4 8-9V7z"/></svg>Clubes<span class="badge" id="nav-badge-club" style="display:none"></span></a>
+      <a data-view="lancamentos"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>Lançamentos</a>
+      <a data-view="cpf"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><circle cx="8.5" cy="11" r="2"/><path d="M5.5 16a3 3 0 0 1 6 0M15 10h4M15 14h3"/></svg>CPF</a>
       <a data-view="benef"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>Beneficiários</a>
       <a data-view="values"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M9.5 9.5a2 2 0 0 1 2-1.5h1a2 2 0 0 1 0 4h-1a2 2 0 0 0 0 4h1a2 2 0 0 0 2-1.5"/></svg>Valor das milhas</a>
     </nav>
@@ -257,6 +259,8 @@
     <a data-view="dash">Visão geral</a>
     <a data-view="saldos">Saldos</a>
     <a data-view="clubes">Clubes</a>
+    <a data-view="lancamentos">Lançamentos</a>
+    <a data-view="cpf">CPF</a>
     <a data-view="benef">Pessoas</a>
     <a data-view="values">Valores</a>
     <a class="lo" onclick="signOut()">Sair</a>
@@ -277,6 +281,7 @@
    =================================================================== */
 const SUPABASE_URL      = 'https://cbwflgkyqubaosrsrtnp.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNid2ZsZ2t5cXViYW9zcnNydG5wIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI1Nzc0MTEsImV4cCI6MjA5ODE1MzQxMX0.lsxXxvmQZx3cIEaITqVSUQIjFgqd7_Ri8QW1r5_tU4w';
+
 /* =================================================================== */
 
 const SQL_SCHEMA = `create table if not exists public.beneficiaries (
@@ -311,7 +316,33 @@ alter table public.mile_values enable row level security;
 create policy "own_b" on public.beneficiaries for all using (auth.uid()=user_id) with check (auth.uid()=user_id);
 create policy "own_s" on public.balances for all using (auth.uid()=user_id) with check (auth.uid()=user_id);
 create policy "own_c" on public.clubs for all using (auth.uid()=user_id) with check (auth.uid()=user_id);
-create policy "own_v" on public.mile_values for all using (auth.uid()=user_id) with check (auth.uid()=user_id);`;
+create policy "own_v" on public.mile_values for all using (auth.uid()=user_id) with check (auth.uid()=user_id);
+
+alter table public.clubs add column if not exists tier numeric;
+alter table public.clubs add column if not exists monthly_value numeric;
+
+create table if not exists public.transactions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  type text not null, date date not null,
+  beneficiary_id uuid references public.beneficiaries(id) on delete cascade,
+  program text, program_custom text, amount numeric,
+  from_program text, from_program_custom text, from_amount numeric,
+  to_program text, to_program_custom text, to_amount numeric,
+  note text, effects jsonb default '[]'::jsonb, created_at timestamptz default now());
+
+create table if not exists public.cpf_uses (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  beneficiary_id uuid references public.beneficiaries(id) on delete cascade,
+  program text not null, cpf text not null, used_date date not null,
+  transaction_id uuid references public.transactions(id) on delete cascade,
+  created_at timestamptz default now());
+
+alter table public.transactions enable row level security;
+alter table public.cpf_uses enable row level security;
+create policy "own_tx" on public.transactions for all using (auth.uid()=user_id) with check (auth.uid()=user_id);
+create policy "own_cpf" on public.cpf_uses for all using (auth.uid()=user_id) with check (auth.uid()=user_id);`;
 
 const PROGRAMS = [
   {id:'smiles',  name:'Smiles',     color:'#FF5800'},
@@ -325,7 +356,7 @@ const PROGRAMS = [
 const DEFAULT_VALUES = { smiles:15.5, latam:25 }; // R$ por 1.000 milhas (editável)
 
 let sb=null, CURRENT_UID=null, USER_EMAIL='';
-let STATE = { beneficiaries:[], balances:[], clubs:[], values:{} };
+let STATE = { beneficiaries:[], balances:[], clubs:[], values:{}, cpf_uses:[], transactions:[] };
 let view='dash';
 
 const configured = SUPABASE_URL && SUPABASE_ANON_KEY && !SUPABASE_URL.includes('COLE_') && !SUPABASE_ANON_KEY.includes('COLE_');
@@ -375,16 +406,21 @@ function toast(msg, kind){
 
 /* ===================== Camada de dados (Supabase) ===================== */
 async function loadAll(){
-  const [b,bal,cl,mv]=await Promise.all([
+  const [b,bal,cl,mv,cp,tx]=await Promise.all([
     sb.from('beneficiaries').select('*').order('name'),
     sb.from('balances').select('*'),
     sb.from('clubs').select('*'),
     sb.from('mile_values').select('*'),
+    sb.from('cpf_uses').select('*'),
+    sb.from('transactions').select('*').order('date',{ascending:false}),
   ]);
   if(b.error||bal.error||cl.error||mv.error){ toast('Erro ao carregar dados.','bad'); console.error(b.error||bal.error||cl.error||mv.error); }
+  if(cp.error||tx.error){ console.warn('CPF/lançamentos indisponíveis — rode o supabase-upgrade.sql', cp.error||tx.error); }
   STATE.beneficiaries = b.data||[];
   STATE.balances      = bal.data||[];
   STATE.clubs         = cl.data||[];
+  STATE.cpf_uses      = cp.data||[];
+  STATE.transactions  = tx.data||[];
   STATE.values        = {};
   (mv.data||[]).forEach(r=> STATE.values[r.program_key]=Number(r.value_per_1000));
 }
@@ -420,6 +456,8 @@ function render(){
   if(view==='clubes') m.innerHTML=viewClubes();
   if(view==='benef')  m.innerHTML=viewBenef();
   if(view==='values') m.innerHTML=viewValues();
+  if(view==='lancamentos') m.innerHTML=viewLancamentos();
+  if(view==='cpf') m.innerHTML=viewCpf();
   bindActions();
 }
 
@@ -518,20 +556,26 @@ function viewSaldos(){
 /* -------- Clubes -------- */
 function viewClubes(){
   const list=[...STATE.clubs].sort((a,b)=>(clubStatus(a).days??9999)-(clubStatus(b).days??9999));
+  const active=STATE.clubs.filter(c=>c.status==='ativo');
+  const monthlySum=active.reduce((s,c)=>s+(Number(c.monthly_value)||0),0);
+  const milesMonth=active.reduce((s,c)=>s+(Number(c.tier)||0),0);
   let body;
   if(!list.length){
-    body=`<div class="card"><div class="empty"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 4 7v6c0 5 3.5 7.5 8 9 4.5-1.5 8-4 8-9V7z"/></svg></div><h4>Nenhum clube cadastrado</h4><p>Cadastre suas assinaturas e a data limite para cancelar. O quadro avisa quando chegar a hora.</p><button class="btn btn-amber" data-act="add-clube">Adicionar clube</button></div></div>`;
+    body=`<div class="card"><div class="empty"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 4 7v6c0 5 3.5 7.5 8 9 4.5-1.5 8-4 8-9V7z"/></svg></div><h4>Nenhum clube cadastrado</h4><p>Cadastre suas assinaturas, o tamanho do clube e o valor mensal. O quadro avisa quando chegar a hora de cancelar.</p><button class="btn btn-amber" data-act="add-clube">Adicionar clube</button></div></div>`;
   }else{
-    body=`<div class="card"><table><thead><tr><th>Beneficiário</th><th>Programa</th><th>Status</th><th>Adesão</th><th>Cancelar até</th><th></th></tr></thead><tbody>
+    body=`<div class="card"><table><thead><tr><th>Beneficiário</th><th>Programa</th><th>Status</th><th>Tamanho</th><th>Mensal</th><th>Cancelar até</th><th></th></tr></thead><tbody>
       ${list.map(c=>{
         const s=clubStatus(c); const pillCls=s.key==='urgent'?'urgent':s.key==='warn'?'warn':s.key==='off'?'off':'ok';
         const tag=s.tag?`<br><span class="pill ${s.key==='urgent'?'urgent':'warn'}" style="margin-top:4px"><span class="pdot"></span>${s.tag}</span>`:'';
         const cancelCell=c.cancel_date?`<div><span class="mono">${fmtDate(c.cancel_date)}</span>${c.status==='ativo'?tag:''}</div>`:'<span class="mono sub-r">Não definido</span>';
+        const tierCell=c.tier?`<span class="mono">${fmtNum(c.tier)} <span class="sub-r">/mês</span></span>`:'<span class="sub-r">—</span>';
+        const mvCell=(c.monthly_value!=null&&c.monthly_value!=='')?`<span class="money">${fmtBRL(c.monthly_value)}</span>`:'<span class="sub-r">—</span>';
         return `<tr>
           <td data-l="Beneficiário" class="no-l"><div class="who"><span class="ava">${initials(benefName(c.beneficiary_id))}</span>${benefName(c.beneficiary_id)}</div></td>
           <td data-l="Programa"><span class="prog-chip"><span class="pd" style="background:${progColor(c)}"></span>${progLabel(c)}</span></td>
           <td data-l="Status"><span class="pill ${pillCls}"><span class="pdot"></span>${s.label}</span></td>
-          <td data-l="Adesão" class="mono">${fmtDate(c.join_date)}</td>
+          <td data-l="Tamanho">${tierCell}</td>
+          <td data-l="Mensal">${mvCell}</td>
           <td data-l="Cancelar até">${cancelCell}</td>
           <td class="no-l"><div class="row-acts">
             <button class="icon-btn" data-act="edit-clube" data-id="${c.id}" aria-label="Editar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button>
@@ -539,7 +583,8 @@ function viewClubes(){
           </div></td></tr>`;}).join('')}
     </tbody></table></div>`;
   }
-  return `<div class="page-head"><h2>Clubes</h2><p>Controle suas assinaturas e a data limite para cancelar sem perder benefícios.</p></div>
+  return `<div class="page-head"><h2>Clubes</h2><p>Controle suas assinaturas, o tamanho do clube e quando cancelar.</p></div>
+    ${list.length?`<div class="stats"><div class="stat hero"><div class="label">Soma mensal (clubes ativos)</div><div class="num">${fmtBRL(monthlySum)}</div><div class="sub">${fmtNum(milesMonth)} milhas/mês • ${active.length} ativo(s)</div></div></div>`:''}
     <div class="sec-head"><h3>${list.length} clube(s)</h3>${list.length?`<button class="btn btn-primary btn-sm" data-act="add-clube"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Adicionar clube</button>`:''}</div>${body}`;
 }
 
@@ -620,6 +665,12 @@ function bindActions(){
       if(act==='del-clube') return confirmDel('clube',id);
       if(act==='edit-benef') return openBenef(id);
       if(act==='del-benef') return confirmDel('benef',id);
+      if(act==='add-venda') return openVenda();
+      if(act==='add-transfer') return openTransfer();
+      if(act==='del-lancamento') return confirmDel('lancamento',id);
+      if(act==='add-cpf') return openCpfUse();
+      if(act==='cpf-detail') return openCpfDetail(id, el.dataset.prog);
+      if(act==='go-lancamentos') return setView('lancamentos');
     });
   });
 }
@@ -689,6 +740,16 @@ function openClube(id){
     <div class="field" id="wrap-custom" style="display:${c&&c.program==='outro'?'block':'none'}"><label>Nome do programa</label><input id="f-custom" value="${c&&c.program_custom?c.program_custom:''}" placeholder="Ex.: Clube Qatar"></div>
     <div class="field"><label>Situação</label><select id="f-status"><option value="ativo" ${!c||c.status==='ativo'?'selected':''}>Ativo</option><option value="inativo" ${c&&c.status==='inativo'?'selected':''}>Inativo</option></select></div>
     <div class="grid2">
+      <div class="field"><label>Tamanho do clube <span class="opt">(milhas/mês)</span></label>
+        <select id="f-tier" onchange="toggleTier()">
+          ${[1000,2000,3000,5000,10000].map(t=>`<option value="${t}" ${c&&Number(c.tier)===t?'selected':''}>${t/1000}k — ${fmtNum(t)} milhas</option>`).join('')}
+          <option value="custom" ${c&&c.tier&&![1000,2000,3000,5000,10000].includes(Number(c.tier))?'selected':''}>Outro valor…</option>
+          <option value="" ${!c||!c.tier?'selected':''}>Não definido</option>
+        </select></div>
+      <div class="field"><label>Valor mensal <span class="opt">(R$)</span></label><input id="f-mv" type="number" step="0.01" min="0" value="${c&&c.monthly_value!=null?c.monthly_value:''}" placeholder="0,00"></div>
+    </div>
+    <div class="field" id="wrap-tier" style="display:${c&&c.tier&&![1000,2000,3000,5000,10000].includes(Number(c.tier))?'block':'none'}"><label>Milhas/mês personalizado</label><input id="f-tier-custom" type="number" min="0" value="${c&&c.tier&&![1000,2000,3000,5000,10000].includes(Number(c.tier))?c.tier:''}" placeholder="Ex.: 7000"></div>
+    <div class="grid2">
       <div class="field"><label>Data de adesão</label><input id="f-join" type="date" value="${c&&c.join_date?c.join_date:todayStr()}"></div>
       <div class="field"><label>Cancelar até <span class="opt">(opcional)</span></label><input id="f-cancel" type="date" value="${c&&c.cancel_date?c.cancel_date:''}"></div>
     </div>
@@ -697,20 +758,25 @@ function openClube(id){
   </div>`);
 }
 async function saveClube(id){
-  const row={ beneficiary_id:document.getElementById('f-ben').value, program:document.getElementById('f-prog').value, program_custom:document.getElementById('f-custom')?document.getElementById('f-custom').value.trim():'', status:document.getElementById('f-status').value, join_date:document.getElementById('f-join').value||todayStr(), cancel_date:document.getElementById('f-cancel').value||null };
+  let tierVal=document.getElementById('f-tier').value;
+  if(tierVal==='custom'){ const tc=document.getElementById('f-tier-custom'); tierVal=tc?tc.value:''; }
+  const mvEl=document.getElementById('f-mv');
+  const row={ beneficiary_id:document.getElementById('f-ben').value, program:document.getElementById('f-prog').value, program_custom:document.getElementById('f-custom')?document.getElementById('f-custom').value.trim():'', status:document.getElementById('f-status').value, join_date:document.getElementById('f-join').value||todayStr(), cancel_date:document.getElementById('f-cancel').value||null, tier: tierVal?Number(tierVal):null, monthly_value:(mvEl&&mvEl.value!=='')?Number(mvEl.value):null };
   if(id){ if(await dbUpdate('clubs',id,row)) Object.assign(STATE.clubs.find(x=>x.id===id),row); }
   else { const r=await dbInsert('clubs',row); if(r) STATE.clubs.push(r); }
   closeModal(); renderNav(); render(); toast(id?'Clube atualizado.':'Clube adicionado.');
 }
+function toggleTier(){ const v=document.getElementById('f-tier').value; document.getElementById('wrap-tier').style.display=v==='custom'?'block':'none'; }
 
 function needBenef(){
   openModal(`<div class="modal-head"><div><h3>Cadastre uma pessoa antes</h3><p>Saldos e clubes pertencem a um beneficiário.</p></div></div>
   <div class="modal-body"><div class="modal-foot"><button class="btn btn-ghost" onclick="closeModal()">Agora não</button><button class="btn btn-amber" onclick="openBenef()">Cadastrar beneficiário</button></div></div>`);
 }
 function confirmDel(type,id){
-  const labels={saldo:'este saldo',clube:'este clube',benef:'este beneficiário'};
+  const labels={saldo:'este saldo',clube:'este clube',benef:'este beneficiário',lancamento:'este lançamento',cpf:'este uso de CPF'};
   let extra='';
   if(type==='benef'){ const sc=STATE.balances.filter(x=>x.beneficiary_id===id).length, cc=STATE.clubs.filter(x=>x.beneficiary_id===id).length; if(sc||cc) extra=`<div class="hint" style="margin-top:0">Também serão removidos ${sc} saldo(s) e ${cc} clube(s) desta pessoa.</div>`; }
+  if(type==='lancamento'){ extra=`<div class="hint" style="margin-top:0">Os saldos afetados serão restaurados e os CPFs vinculados, removidos.</div>`; }
   openModal(`<div class="modal-head"><div><h3>Excluir</h3><p>Remover ${labels[type]}?</p></div></div>
   <div class="modal-body">${extra}<div class="modal-foot" style="margin-top:8px"><button class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button class="btn" style="background:var(--coral);color:#fff" onclick="doDel('${type}','${id}')">Excluir</button></div></div>`);
 }
@@ -718,7 +784,259 @@ async function doDel(type,id){
   if(type==='saldo'){ if(await dbDelete('balances',id)) STATE.balances=STATE.balances.filter(x=>x.id!==id); }
   if(type==='clube'){ if(await dbDelete('clubs',id)) STATE.clubs=STATE.clubs.filter(x=>x.id!==id); }
   if(type==='benef'){ if(await dbDelete('beneficiaries',id)){ STATE.beneficiaries=STATE.beneficiaries.filter(x=>x.id!==id); STATE.balances=STATE.balances.filter(x=>x.beneficiary_id!==id); STATE.clubs=STATE.clubs.filter(x=>x.beneficiary_id!==id); } }
+  if(type==='lancamento'){ const tx=STATE.transactions.find(x=>x.id===id); if(tx){ await reverseEffects(tx.effects); if(await dbDelete('transactions',id)){ STATE.transactions=STATE.transactions.filter(x=>x.id!==id); STATE.cpf_uses=STATE.cpf_uses.filter(u=>u.transaction_id!==id); } } }
+  if(type==='cpf'){ if(await dbDelete('cpf_uses',id)) STATE.cpf_uses=STATE.cpf_uses.filter(x=>x.id!==id); }
   closeModal(); renderNav(); render(); toast('Item excluído.');
+}
+
+/* ===================== Saldos: FIFO helpers ===================== */
+function sameProg(b, program, programCustom){
+  if(b.program!==program) return false;
+  if(program==='outro') return (b.program_custom||'').trim().toLowerCase()===(programCustom||'').trim().toLowerCase();
+  return true;
+}
+function poolFor(benId, program, programCustom){
+  return STATE.balances.filter(b=>b.beneficiary_id===benId && sameProg(b,program,programCustom))
+    .sort((a,b)=>(a.balance_date||'').localeCompare(b.balance_date||'') || (a.created_at||'').localeCompare(b.created_at||''));
+}
+function totalFor(benId, program, programCustom){ return poolFor(benId,program,programCustom).reduce((s,b)=>s+(Number(b.amount)||0),0); }
+
+async function consumeFIFO(benId, program, programCustom, qty){
+  const pool=poolFor(benId,program,programCustom);
+  let remaining=Number(qty); const effects=[];
+  for(const b of pool){
+    if(remaining<=0) break;
+    const cur=Number(b.amount)||0; const take=Math.min(remaining,cur);
+    if(take<=0) continue;
+    remaining-=take; const newAmt=cur-take;
+    if(newAmt<=0.0001){
+      effects.push({type:'remove', balance:{id:b.id,user_id:b.user_id,beneficiary_id:b.beneficiary_id,program:b.program,program_custom:b.program_custom,amount:cur,balance_date:b.balance_date,expiration_date:b.expiration_date}});
+      await dbDelete('balances', b.id); STATE.balances=STATE.balances.filter(x=>x.id!==b.id);
+    }else{
+      effects.push({type:'reduce', balance_id:b.id, take});
+      await dbUpdate('balances', b.id, {amount:newAmt});
+      const loc=STATE.balances.find(x=>x.id===b.id); if(loc) loc.amount=newAmt;
+    }
+  }
+  return effects;
+}
+async function reverseEffects(effects){
+  for(const e of [...(effects||[])].reverse()){
+    if(e.type==='remove'){
+      const b=e.balance;
+      const {data,error}=await sb.from('balances').insert({id:b.id,user_id:b.user_id,beneficiary_id:b.beneficiary_id,program:b.program,program_custom:b.program_custom,amount:b.amount,balance_date:b.balance_date,expiration_date:b.expiration_date}).select().single();
+      if(!error&&data) STATE.balances.push(data);
+    }else if(e.type==='reduce'){
+      const loc=STATE.balances.find(x=>x.id===e.balance_id);
+      if(loc){ const na=(Number(loc.amount)||0)+Number(e.take); await dbUpdate('balances',e.balance_id,{amount:na}); loc.amount=na; }
+    }else if(e.type==='create'){
+      if(e.balance_id){ await dbDelete('balances',e.balance_id); STATE.balances=STATE.balances.filter(x=>x.id!==e.balance_id); }
+    }
+  }
+}
+
+/* ===================== Lançamentos: tela ===================== */
+function viewLancamentos(){
+  const list=[...STATE.transactions].sort((a,b)=>(b.date||'').localeCompare(a.date||'')||(b.created_at||'').localeCompare(a.created_at||''));
+  let body;
+  if(!list.length){
+    body=`<div class="card"><div class="empty"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg></div><h4>Nenhum lançamento</h4><p>Registre vendas de milhas e transferências bonificadas. Eles ajustam os saldos automaticamente.</p><div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap"><button class="btn btn-amber" data-act="add-venda">Venda de milhas</button><button class="btn btn-ghost" data-act="add-transfer">Transferência</button></div></div></div>`;
+  }else{
+    body=`<div class="card"><table><thead><tr><th>Data</th><th>Tipo</th><th>Beneficiário</th><th>Detalhe</th><th></th></tr></thead><tbody>
+      ${list.map(t=>{
+        let tipo,detalhe;
+        if(t.type==='venda'){
+          tipo=`<span class="pill urgent"><span class="pdot"></span>Venda</span>`;
+          const cpfs=STATE.cpf_uses.filter(u=>u.transaction_id===t.id).length;
+          detalhe=`−${fmtNum(t.amount)} ${progLabel({program:t.program,program_custom:t.program_custom})}${cpfs?` <span class="sub-r">· ${cpfs} CPF(s)</span>`:''}`;
+        }else{
+          tipo=`<span class="pill ok"><span class="pdot"></span>Transferência</span>`;
+          const pct=t.from_amount?Math.round((t.to_amount/t.from_amount-1)*100):0;
+          detalhe=`−${fmtNum(t.from_amount)} ${progLabel({program:t.from_program,program_custom:t.from_program_custom})} → +${fmtNum(t.to_amount)} ${progLabel({program:t.to_program,program_custom:t.to_program_custom})} <span class="sub-r">(${pct>=0?'+':''}${pct}%)</span>`;
+        }
+        return `<tr>
+          <td data-l="Data" class="mono no-l">${fmtDate(t.date)}</td>
+          <td data-l="Tipo">${tipo}</td>
+          <td data-l="Beneficiário">${benefName(t.beneficiary_id)}</td>
+          <td data-l="Detalhe" class="mono" style="font-size:13px">${detalhe}${t.note?` <span class="sub-r">· ${t.note}</span>`:''}</td>
+          <td class="no-l"><div class="row-acts"><button class="icon-btn del" data-act="del-lancamento" data-id="${t.id}" aria-label="Excluir"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg></button></div></td>
+        </tr>`;}).join('')}
+    </tbody></table></div>`;
+  }
+  return `<div class="page-head"><h2>Lançamentos</h2><p>Vendas e transferências. A baixa de saldo segue FIFO: consome primeiro as milhas mais antigas.</p></div>
+    <div class="sec-head"><h3>${list.length} lançamento(s)</h3><div style="display:flex;gap:8px"><button class="btn btn-primary btn-sm" data-act="add-venda"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Venda</button><button class="btn btn-ghost btn-sm" data-act="add-transfer">Transferência</button></div></div>${body}`;
+}
+
+/* ---- Venda ---- */
+function openVenda(){
+  if(!STATE.beneficiaries.length) return needBenef();
+  openModal(`<div class="modal-head"><div><h3>Venda de milhas</h3><p>Dá baixa no saldo mais antigo da conta.</p></div></div>
+  <div class="modal-body">
+    <div class="field"><label>Beneficiário</label><select id="v-ben" onchange="vRefresh()">${benefOptions('')}</select></div>
+    <div class="field"><label>Conta / programa vendido</label><select id="v-prog" onchange="toggleCustom('v-prog','v-wrap-custom');vRefresh()">${progOptions('latam')}</select></div>
+    <div class="field" id="v-wrap-custom" style="display:none"><label>Nome do programa</label><input id="v-custom" oninput="vRefresh()" placeholder="Ex.: TAP Miles&Go"></div>
+    <div class="grid2">
+      <div class="field"><label>Quantidade vendida</label><input id="v-amount" type="number" min="0" oninput="vRefresh()" placeholder="0"><div class="err" id="v-err"></div></div>
+      <div class="field"><label>Data da venda</label><input id="v-date" type="date" value="${todayStr()}"></div>
+    </div>
+    <div class="hint" id="v-avail" style="margin-top:-6px"></div>
+    <div id="v-cpf-wrap" style="display:none"><div class="field"><label>CPFs usados <span class="opt">(um por linha)</span></label><textarea id="v-cpfs" rows="3" style="width:100%;padding:11px 13px;border:1px solid var(--line);border-radius:10px;font-size:14px;font-family:inherit" placeholder="123.456.789-00&#10;Maria Silva"></textarea></div></div>
+    <div class="field"><label>Observação <span class="opt">(opcional)</span></label><input id="v-note" placeholder="Ex.: vendido pela plataforma X"></div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" onclick="saveVenda()">Lançar venda</button></div>
+  </div>`);
+  vRefresh();
+}
+function vRefresh(){
+  const ben=document.getElementById('v-ben').value, prog=document.getElementById('v-prog').value;
+  const custom=document.getElementById('v-custom')?document.getElementById('v-custom').value:'';
+  const el=document.getElementById('v-avail'); if(el) el.innerHTML=`Disponível nesta conta: <b>${fmtNum(totalFor(ben,prog,custom))}</b> milhas`;
+  const w=document.getElementById('v-cpf-wrap'); if(w) w.style.display=(prog==='smiles'||prog==='latam')?'block':'none';
+}
+async function saveVenda(){
+  const ben=document.getElementById('v-ben').value, prog=document.getElementById('v-prog').value;
+  const custom=document.getElementById('v-custom')?document.getElementById('v-custom').value.trim():'';
+  const amount=Number(document.getElementById('v-amount').value), date=document.getElementById('v-date').value||todayStr();
+  const err=document.getElementById('v-err');
+  if(!amount||amount<=0){ err.textContent='Informe a quantidade.'; err.classList.add('show'); return; }
+  const avail=totalFor(ben,prog,custom);
+  if(amount>avail){ err.textContent=`Saldo insuficiente (tem ${fmtNum(avail)}).`; err.classList.add('show'); return; }
+  const note=document.getElementById('v-note').value.trim();
+  const tx=await dbInsert('transactions',{type:'venda',date,beneficiary_id:ben,program:prog,program_custom:prog==='outro'?custom:'',amount,note,effects:[]});
+  if(!tx) return;
+  const effects=await consumeFIFO(ben,prog,custom,amount);
+  await dbUpdate('transactions',tx.id,{effects}); tx.effects=effects; STATE.transactions.unshift(tx);
+  if(prog==='smiles'||prog==='latam'){
+    const lines=(document.getElementById('v-cpfs').value||'').split('\n').map(s=>s.trim()).filter(Boolean);
+    for(const cpf of lines){ const r=await dbInsert('cpf_uses',{beneficiary_id:ben,program:prog,cpf,used_date:date,transaction_id:tx.id}); if(r) STATE.cpf_uses.push(r); }
+  }
+  closeModal(); renderNav(); render(); toast('Venda lançada e saldo atualizado.');
+}
+
+/* ---- Transferência bonificada ---- */
+function openTransfer(){
+  if(!STATE.beneficiaries.length) return needBenef();
+  openModal(`<div class="modal-head"><div><h3>Transferência bonificada</h3><p>Sai de uma conta e entra em outra do mesmo beneficiário.</p></div></div>
+  <div class="modal-body">
+    <div class="field"><label>Beneficiário</label><select id="t-ben" onchange="tRefresh()">${benefOptions('')}</select></div>
+    <div class="grid2">
+      <div class="field"><label>Origem (sai)</label><select id="t-from" onchange="toggleCustom('t-from','t-from-wrap');tRefresh()">${progOptions('livelo')}</select></div>
+      <div class="field"><label>Milhas que saem</label><input id="t-fromamt" type="number" min="0" oninput="tRefresh()" placeholder="0"></div>
+    </div>
+    <div class="field" id="t-from-wrap" style="display:none"><label>Nome do programa de origem</label><input id="t-fromcustom" oninput="tRefresh()"></div>
+    <div class="grid2">
+      <div class="field"><label>Destino (entra)</label><select id="t-to" onchange="toggleCustom('t-to','t-to-wrap')">${progOptions('smiles')}</select></div>
+      <div class="field"><label>Milhas que entram</label><input id="t-toamt" type="number" min="0" oninput="tRefresh()" placeholder="0"></div>
+    </div>
+    <div class="field" id="t-to-wrap" style="display:none"><label>Nome do programa de destino</label><input id="t-tocustom"></div>
+    <div class="field"><label>Data</label><input id="t-date" type="date" value="${todayStr()}"></div>
+    <div class="hint" id="t-avail" style="margin-top:-6px"></div>
+    <div class="err" id="t-err"></div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" onclick="saveTransfer()">Lançar transferência</button></div>
+  </div>`);
+  tRefresh();
+}
+function tRefresh(){
+  const ben=document.getElementById('t-ben').value, from=document.getElementById('t-from').value;
+  const fc=document.getElementById('t-fromcustom')?document.getElementById('t-fromcustom').value:'';
+  const fa=Number(document.getElementById('t-fromamt').value)||0, ta=Number(document.getElementById('t-toamt').value)||0;
+  const el=document.getElementById('t-avail');
+  if(el){ let bonus=''; if(fa>0&&ta>0){ const pct=Math.round((ta/fa-1)*100); bonus=` • bônus ${pct>=0?'+':''}${pct}%`; } el.innerHTML=`Disponível na origem: <b>${fmtNum(totalFor(ben,from,fc))}</b> milhas${bonus}`; }
+}
+async function saveTransfer(){
+  const ben=document.getElementById('t-ben').value;
+  const from=document.getElementById('t-from').value, fc=document.getElementById('t-fromcustom')?document.getElementById('t-fromcustom').value.trim():'';
+  const to=document.getElementById('t-to').value, tc=document.getElementById('t-tocustom')?document.getElementById('t-tocustom').value.trim():'';
+  const fa=Number(document.getElementById('t-fromamt').value), ta=Number(document.getElementById('t-toamt').value), date=document.getElementById('t-date').value||todayStr();
+  const err=document.getElementById('t-err');
+  const sameAccount = from===to && (from!=='outro' || fc.toLowerCase()===tc.toLowerCase());
+  if(sameAccount){ err.textContent='Origem e destino devem ser contas diferentes.'; err.classList.add('show'); return; }
+  if(!fa||fa<=0||!ta||ta<=0){ err.textContent='Informe quanto sai e quanto entra.'; err.classList.add('show'); return; }
+  const avail=totalFor(ben,from,fc);
+  if(fa>avail){ err.textContent=`Saldo insuficiente na origem (tem ${fmtNum(avail)}).`; err.classList.add('show'); return; }
+  const tx=await dbInsert('transactions',{type:'transferencia',date,beneficiary_id:ben,from_program:from,from_program_custom:from==='outro'?fc:'',from_amount:fa,to_program:to,to_program_custom:to==='outro'?tc:'',to_amount:ta,effects:[]});
+  if(!tx) return;
+  const effects=await consumeFIFO(ben,from,fc,fa);
+  const newRow=await dbInsert('balances',{beneficiary_id:ben,program:to,program_custom:to==='outro'?tc:'',amount:ta,balance_date:date,expiration_date:null});
+  if(newRow){ STATE.balances.push(newRow); effects.push({type:'create',balance_id:newRow.id}); }
+  await dbUpdate('transactions',tx.id,{effects}); tx.effects=effects; STATE.transactions.unshift(tx);
+  closeModal(); renderNav(); render(); toast('Transferência lançada.');
+}
+
+/* ===================== Gestor de CPF ===================== */
+const CPF_LIMITS={smiles:25, latam:24};
+function addDays(s,n){ const [y,m,d]=s.split('-').map(Number); const dt=new Date(y,m-1,d); dt.setDate(dt.getDate()+n); const off=dt.getTimezoneOffset()*60000; return new Date(dt-off).toISOString().slice(0,10); }
+function distinctLatest(uses){ const m={}; uses.forEach(u=>{ const k=(u.cpf||'').trim().toLowerCase(); if(!k) return; if(!m[k]||(u.used_date||'')>m[k]) m[k]=u.used_date||''; }); return m; }
+function cpfStat(benId, program){
+  const uses=STATE.cpf_uses.filter(u=>u.beneficiary_id===benId && u.program===program);
+  const latest=distinctLatest(uses); const limit=CPF_LIMITS[program];
+  let used=0, nextFree=null;
+  if(program==='smiles'){
+    const y=new Date().getFullYear();
+    Object.values(latest).forEach(d=>{ if(d && new Date(d+'T00:00:00').getFullYear()===y) used++; });
+    nextFree=(y+1)+'-01-01';
+  }else{
+    Object.values(latest).forEach(d=>{ if(!d) return; const age=-daysUntil(d); if(age<365){ used++; const f=addDays(d,365); if(!nextFree||f<nextFree) nextFree=f; } });
+  }
+  return {used, available:Math.max(0,limit-used), limit, nextFree};
+}
+function viewCpf(){
+  const rows=[];
+  STATE.beneficiaries.forEach(ben=>{ ['smiles','latam'].forEach(prog=>{
+    const has=STATE.balances.some(b=>b.beneficiary_id===ben.id&&b.program===prog)||STATE.cpf_uses.some(u=>u.beneficiary_id===ben.id&&u.program===prog);
+    if(has) rows.push({ben,prog,stat:cpfStat(ben.id,prog)});
+  }); });
+  let body;
+  if(!rows.length){
+    body=`<div class="card"><div class="empty"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="11" r="2"/><path d="M13 10h5M13 14h4"/></svg></div><h4>Nada para mostrar ainda</h4><p>Aparece aqui quando houver saldo ou uso de CPF em contas Smiles ou Latam. Você também pode registrar um uso manualmente.</p><button class="btn btn-amber" data-act="add-cpf">Registrar uso de CPF</button></div></div>`;
+  }else{
+    body=`<div class="card"><table><thead><tr><th>Beneficiário</th><th>Conta</th><th>Usados</th><th>Disponíveis</th><th>Renovação</th><th></th></tr></thead><tbody>
+      ${rows.map(r=>{
+        const s=r.stat, pColor=progById(r.prog).color, pName=progById(r.prog).name, ratio=s.available/s.limit;
+        const cls=s.available===0?'urgent':ratio<=0.2?'warn':'ok';
+        const ren=r.prog==='smiles'?`01/01/${new Date().getFullYear()+1}`:(s.nextFree?fmtDate(s.nextFree):'—');
+        const renLabel=r.prog==='smiles'?'vira o ano':(s.nextFree?'libera 1 CPF':'sem uso ativo');
+        return `<tr>
+          <td data-l="Beneficiário" class="no-l"><div class="who"><span class="ava">${initials(r.ben.name)}</span>${r.ben.name}</div></td>
+          <td data-l="Conta"><span class="prog-chip"><span class="pd" style="background:${pColor}"></span>${pName}</span></td>
+          <td data-l="Usados" class="mono">${s.used} / ${s.limit}</td>
+          <td data-l="Disponíveis"><span class="pill ${cls}"><span class="pdot"></span>${s.available} livre(s)</span></td>
+          <td data-l="Renovação"><span class="mono">${ren}</span><br><span class="sub-r">${renLabel}</span></td>
+          <td class="no-l"><div class="row-acts"><button class="icon-btn" data-act="cpf-detail" data-id="${r.ben.id}" data-prog="${r.prog}" aria-label="Ver CPFs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg></button></div></td>
+        </tr>`;}).join('')}
+    </tbody></table></div>`;
+  }
+  return `<div class="page-head"><h2>Gestor de CPF</h2><p>Quantos CPFs restam por conta. Smiles: 25/ano (renova em 1º de janeiro). Latam: 24 (cada CPF renova 365 dias após o uso).</p></div>
+    <div class="sec-head"><h3>Contas Smiles e Latam</h3><button class="btn btn-primary btn-sm" data-act="add-cpf"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Registrar uso</button></div>${body}`;
+}
+function openCpfDetail(benId, prog){
+  const uses=STATE.cpf_uses.filter(u=>u.beneficiary_id===benId&&u.program===prog).sort((a,b)=>(b.used_date||'').localeCompare(a.used_date||''));
+  const pName=progById(prog).name;
+  const rows=uses.length?uses.map(u=>{
+    let st='';
+    if(prog==='latam'){ const left=365-(-daysUntil(u.used_date)); st=left>0?`libera em ${left}d`:'já renovado'; }
+    else { const y=new Date().getFullYear(); st=(new Date(u.used_date+'T00:00:00').getFullYear()===y)?'conta este ano':'ano anterior'; }
+    return `<div class="vrow"><div class="vlabel" style="flex-direction:column;align-items:flex-start;gap:2px"><div>${u.cpf}</div><div class="sub-r">${fmtDate(u.used_date)} · ${st}</div></div><button class="icon-btn del" onclick="delCpf('${u.id}')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg></button></div>`;
+  }).join(''):`<div class="empty" style="padding:24px"><p style="margin:0">Nenhum CPF registrado nesta conta.</p></div>`;
+  openModal(`<div class="modal-head"><div><h3>CPFs — ${pName}</h3><p>${benefName(benId)}</p></div></div><div class="modal-body"><div class="card"><div class="vlist">${rows}</div></div><div class="modal-foot" style="margin-top:14px"><button class="btn btn-ghost" onclick="closeModal()">Fechar</button><button class="btn btn-amber" onclick="openCpfUse('${benId}','${prog}')">Registrar uso</button></div></div>`);
+}
+async function delCpf(id){ if(await dbDelete('cpf_uses',id)) STATE.cpf_uses=STATE.cpf_uses.filter(x=>x.id!==id); closeModal(); render(); toast('Uso de CPF removido.'); }
+function openCpfUse(benId, prog){
+  if(!STATE.beneficiaries.length) return needBenef();
+  openModal(`<div class="modal-head"><div><h3>Registrar uso de CPF</h3><p>Para contas Smiles ou Latam.</p></div></div>
+  <div class="modal-body">
+    <div class="field"><label>Beneficiário</label><select id="cu-ben">${benefOptions(benId||'')}</select></div>
+    <div class="field"><label>Conta</label><select id="cu-prog"><option value="smiles" ${prog==='smiles'?'selected':''}>Smiles</option><option value="latam" ${prog==='latam'?'selected':''}>Latam Pass</option></select></div>
+    <div class="field"><label>CPF <span class="opt">(nº ou nome do titular)</span></label><input id="cu-cpf" placeholder="123.456.789-00"><div class="err" id="cu-err">Informe o CPF.</div></div>
+    <div class="field"><label>Data do uso</label><input id="cu-date" type="date" value="${todayStr()}"></div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" onclick="saveCpfUse()">Registrar</button></div>
+  </div>`);
+}
+async function saveCpfUse(){
+  const cpf=document.getElementById('cu-cpf').value.trim();
+  if(!cpf){ document.getElementById('cu-err').classList.add('show'); return; }
+  const row={beneficiary_id:document.getElementById('cu-ben').value, program:document.getElementById('cu-prog').value, cpf, used_date:document.getElementById('cu-date').value||todayStr()};
+  const r=await dbInsert('cpf_uses',row); if(r) STATE.cpf_uses.push(r);
+  closeModal(); render(); toast('Uso de CPF registrado.');
 }
 
 /* ===================== Gate: setup / auth ===================== */
@@ -772,7 +1090,7 @@ function traduz(m){
   if(/Email not confirmed/i.test(m)) return 'Confirme seu e-mail antes de entrar (ou desative a confirmação no Supabase).';
   return m;
 }
-async function signOut(){ await sb.auth.signOut(); CURRENT_UID=null; STATE={beneficiaries:[],balances:[],clubs:[],values:{}}; showAuth('signin'); }
+async function signOut(){ await sb.auth.signOut(); CURRENT_UID=null; STATE={beneficiaries:[],balances:[],clubs:[],values:{},cpf_uses:[],transactions:[]}; showAuth('signin'); }
 async function afterLogin(){
   const {data:{session}}=await sb.auth.getSession();
   CURRENT_UID=session.user.id; USER_EMAIL=session.user.email||'';
@@ -782,7 +1100,7 @@ async function afterLogin(){
 }
 
 /* expõe funções usadas inline */
-Object.assign(window,{closeModal,saveBenef,openBenef,saveSaldo,saveClube,toggleCustom,needBenef,confirmDel,doDel,saveValues,setView,showAuth,doSignIn,doSignUp,signOut});
+Object.assign(window,{closeModal,saveBenef,openBenef,saveSaldo,saveClube,toggleCustom,toggleTier,needBenef,confirmDel,doDel,saveValues,setView,showAuth,doSignIn,doSignUp,signOut,openVenda,vRefresh,saveVenda,openTransfer,tRefresh,saveTransfer,openCpfUse,saveCpfUse,openCpfDetail,delCpf});
 document.querySelectorAll('#nav a[data-view], #mobnav a[data-view]').forEach(a=>a.addEventListener('click',()=>setView(a.dataset.view)));
 
 /* ===================== Início ===================== */
